@@ -65,11 +65,29 @@ def extract_invoice_number(text: str) -> str:
     return "UNKNOWN-INVOICE"
 
 def extract_business(text: str) -> str:
+    import re
+
     lines = [re.sub(r"\s+", " ", x).strip() for x in text.splitlines() if x.strip()]
+
+    # PRIORITY 1: Look for company names with PTY LTD
+    for line in lines[:30]:
+        if "pty ltd" in line.lower():
+            return clean_name(line).upper()
+
+    # PRIORITY 2: Known brands fallback
+    known_brands = ["canon", "kyocera", "xerox", "hp"]
+    for line in lines[:20]:
+        lower = line.lower()
+        for brand in known_brands:
+            if brand in lower:
+                return clean_name(line).upper()
+
+    # PRIORITY 3: fallback logic
     blockers = [
         "invoice", "tax invoice", "invoice date", "due date", "page",
         "description", "subtotal", "total", "amount due", "abn"
     ]
+
     for line in lines[:20]:
         lower = line.lower()
         if any(b in lower for b in blockers):
@@ -79,6 +97,7 @@ def extract_business(text: str) -> str:
         if re.search(r"(street|road|vic|nsw|qld|australia|phone|email)", lower):
             continue
         return clean_name(line).upper()
+
     return "UNKNOWN BUSINESS"
 
 def read_pdf_text(file_bytes: bytes) -> str:
