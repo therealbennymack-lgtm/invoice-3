@@ -196,8 +196,9 @@ uploaded_files = st.file_uploader("Upload PDF files", type=["pdf"], accept_multi
 
 if uploaded_files:
     zip_buffer = io.BytesIO()
-    seen = set()
-    results = []
+seen = set()
+results = []
+duplicates = []
 
     with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zf:
         for uploaded in uploaded_files:
@@ -209,10 +210,16 @@ if uploaded_files:
             invoice_date = parse_date(text)
             invoice_number = extract_invoice_number(text)
 
-            dedupe_key = f"{business}|{abn}|{invoice_date}|{invoice_number}"
-            if dedupe_key in seen:
-                continue
-            seen.add(dedupe_key)
+       if dedupe_key in seen:
+    duplicates.append({
+        "business": business,
+        "abn": abn,
+        "invoice_date": invoice_date,
+        "invoice_number": invoice_number,
+    })
+    continue
+
+seen.add(dedupe_key)
 
             filename = clean_name(f"{business} - {abn} - {invoice_date}.pdf")
             zf.writestr(filename, file_bytes)
@@ -269,11 +276,15 @@ if uploaded_files:
     ]
 
     st.subheader("Summary")
-    st.dataframe(table_rows, use_container_width=True)
 
-    st.download_button(
-        label="Download ZIP",
-        data=zip_buffer.getvalue(),
-        file_name="processed_invoices.zip",
-        mime="application/zip",
-    )
+total_uploaded = len(uploaded_files)
+unique_count = len(results)
+duplicate_count = len(duplicates)
+
+st.write(f"Total files uploaded: {total_uploaded}")
+st.write(f"Unique invoices kept: {unique_count}")
+st.write(f"Duplicate invoices removed: {duplicate_count}")
+
+if duplicates:
+    st.subheader("Duplicate invoices detected")
+    st.dataframe(duplicates, use_container_width=True)
