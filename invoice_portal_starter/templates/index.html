@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>{{ title }}</title>
+  <link rel="stylesheet" href="/static/styles.css" />
+</head>
+<body>
+  <main class="wrap">
+    <section class="card hero">
+      <div>
+        <p class="eyebrow">Invoice portal starter</p>
+        <h1>{{ title }}</h1>
+        <p class="lead">
+          Upload one or more PDF files. The app will split invoices, remove duplicates,
+          and return one PDF per invoice named like:
+          Business Name - ABN - Invoice Date.pdf
+        </p>
+      </div>
+    </section>
+
+    <section class="card">
+      <form action="/process" method="post" enctype="multipart/form-data" class="upload-form">
+        <label for="files" class="dropzone" id="dropzone">
+          <input id="files" name="files" type="file" accept=".pdf" multiple />
+          <div>
+            <strong>Drop PDF files here</strong>
+            <span>or click to browse</span>
+          </div>
+        </label>
+        <button type="submit" class="button">Process invoices</button>
+      </form>
+
+      {% if error %}
+      <div class="error">{{ error }}</div>
+      {% endif %}
+    </section>
+
+    <section class="card">
+      <h2>What this starter includes</h2>
+      <ul>
+        <li>FastAPI web app</li>
+        <li>Drag and drop upload UI</li>
+        <li>PDF splitting by invoice</li>
+        <li>Duplicate removal using ABN, invoice number, and invoice date</li>
+        <li>ZIP download of final files</li>
+      </ul>
+    </section>
+
+    <section class="card">
+      <h2>Best next upgrades for a real product</h2>
+      <ul>
+        <li>OCR for scanned PDFs</li>
+        <li>User accounts and billing</li>
+        <li>Job history and audit log</li>
+        <li>CSV and API export</li>
+        <li>Zoho, Xero, MYOB, and QuickBooks integrations</li>
+      </ul>
+    </section>
+  </main>
+</body>
+</html>
