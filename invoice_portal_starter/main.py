@@ -69,33 +69,79 @@ def extract_business(text: str) -> str:
 
     lines = [re.sub(r"\s+", " ", x).strip() for x in text.splitlines() if x.strip()]
 
-    # PRIORITY 1: Look for company names with PTY LTD
-    for line in lines[:30]:
-        if "pty ltd" in line.lower():
-            return clean_name(line).upper()
-
-    # PRIORITY 2: Known brands fallback
-    known_brands = ["canon", "kyocera", "xerox", "hp"]
-    for line in lines[:20]:
-        lower = line.lower()
-        for brand in known_brands:
-            if brand in lower:
-                return clean_name(line).upper()
-
-    # PRIORITY 3: fallback logic
-    blockers = [
-        "invoice", "tax invoice", "invoice date", "due date", "page",
-        "description", "subtotal", "total", "amount due", "abn"
+    bad_starts = ("<~", "~", "ccd=", "<", ">")
+    bad_contains = [
+        "invoice",
+        "tax invoice",
+        "invoice date",
+        "due date",
+        "page",
+        "description",
+        "subtotal",
+        "total",
+        "amount due",
+        "abn",
+        "customer bill to",
+        "customer ship to",
+        "installation address",
+        "remittance",
+        "destination",
+        "service order no",
+        "order date",
+        "payment due by",
+        "trading terms",
+        "phone",
+        "fax",
+        "bpay",
     ]
 
-    for line in lines[:20]:
+    # PRIORITY 1: known supplier names
+    known_suppliers = [
+        "canon australia pty ltd",
+        "kyocera document solutions australia pty ltd",
+        "bbc digital",
+        "kk technical services pty ltd",
+        "that marketing co",
+    ]
+    for line in lines[:40]:
         lower = line.lower()
-        if any(b in lower for b in blockers):
+        for supplier in known_suppliers:
+            if supplier in lower:
+                return clean_name(supplier).upper()
+
+    # PRIORITY 2: any PTY LTD line that looks like a supplier
+    for line in lines[:40]:
+        lower = line.lower()
+
+        if line.startswith(bad_starts):
+            continue
+        if any(x in lower for x in bad_contains):
+            continue
+        if re.search(r"(street|road|vic|nsw|qld|wa|sa|tas|australia)", lower):
+            continue
+        if re.search(r"^\W+$", line):
+            continue
+
+        if "pty ltd" in lower:
+            return clean_name(line).upper()
+
+    # PRIORITY 3: fallback clean line
+    for line in lines[:40]:
+        lower = line.lower()
+
+        if line.startswith(bad_starts):
+            continue
+        if any(x in lower for x in bad_contains):
             continue
         if re.search(r"\d{3,}", line):
             continue
-        if re.search(r"(street|road|vic|nsw|qld|australia|phone|email)", lower):
+        if re.search(r"(street|road|vic|nsw|qld|wa|sa|tas|australia|email|www\.)", lower):
             continue
+        if re.search(r"^\W+$", line):
+            continue
+        if len(line) < 3:
+            continue
+
         return clean_name(line).upper()
 
     return "UNKNOWN BUSINESS"
