@@ -8,7 +8,6 @@ import streamlit as st
 
 st.set_page_config(page_title="Invoice Splitter", layout="wide")
 st.title("Invoice Splitter")
-st.write("Upload PDF invoices, remove duplicates, delete bad invoice rows, and download cleaned invoice PDFs.")
 
 # -----------------------
 # HELPERS
@@ -30,38 +29,29 @@ def read_pdf_text(file_bytes: bytes) -> str:
 
 
 def extract_business(text: str) -> str:
-    lines = [re.sub(r"\s+", " ", x).strip() for x in text.splitlines() if x.strip()]
-    full_text = " ".join(lines).lower()
+    text_lower = text.lower()
 
-    if "canon australia" in full_text:
+    if "canon australia" in text_lower:
         return "CANON AUSTRALIA PTY LTD"
-    if "kyocera" in full_text:
+    if "kyocera" in text_lower:
         return "KYOCERA DOCUMENT SOLUTIONS AUSTRALIA PTY LTD"
-    if "bbc digital" in full_text:
+    if "bbc digital" in text_lower:
         return "BBC DIGITAL"
-    if "kk technical services" in full_text:
+    if "kk technical services" in text_lower:
         return "KK TECHNICAL SERVICES PTY LTD"
-    if "that marketing co" in full_text:
+    if "that marketing co" in text_lower:
         return "THAT MARKETING CO"
 
+    lines = text.splitlines()
     for line in lines[:30]:
         if "pty ltd" in line.lower():
-            bad = [
-                "customer bill to",
-                "customer ship to",
-                "installation address",
-                "office print solutions",
-                "docufy",
-            ]
-            if any(b in line.lower() for b in bad):
-                continue
             return clean_name(line).upper()
 
     return "UNKNOWN BUSINESS"
 
 
 def extract_abn(text: str) -> str:
-    match = re.search(r"(?:ABN|A\.B\.N\.?)\s*[:\-]?\s*(?:ABN\s*[:\-]?\s*)?(\d[\d\s]{9,20}\d)", text, re.IGNORECASE)
+    match = re.search(r"(?:ABN)\s*[:\-]?\s*(?:ABN\s*[:\-]?\s*)?(\d[\d\s]{9,20}\d)", text, re.IGNORECASE)
     if match:
         digits = re.sub(r"\D", "", match.group(1))
         if len(digits) == 11:
@@ -77,63 +67,39 @@ def extract_abn(text: str) -> str:
 
 
 def parse_date(text: str) -> str:
-    lines = [re.sub(r"\s+", " ", x).strip() for x in text.splitlines() if x.strip()]
-    full_text = "\n".join(lines)
-
-    date_patterns = [
+    patterns = [
         r"(\d{1,2}/\d{1,2}/\d{4})",
         r"(\d{1,2}-[A-Za-z]{3}-\d{2,4})",
         r"(\d{4}-\d{2}-\d{2})",
     ]
 
-    anchor_patterns = [
-        r"Invoice Date\s*[:\-]?\s*",
-        r"Date\s*[:\-]?\s*",
-    ]
-
-    for anchor in anchor_patterns:
-        for dp in date_patterns:
-            match = re.search(anchor + dp, full_text, re.IGNORECASE)
-            if match:
-                raw = match.group(1).strip()
-                for fmt in ("%d/%m/%Y", "%d-%b-%Y", "%d-%b-%y", "%Y-%m-%d"):
-                    try:
-                        return datetime.strptime(raw, fmt).strftime("%Y-%m-%d")
-                    except ValueError:
-                        pass
-
-    for dp in date_patterns:
-        matches = re.findall(dp, full_text)
-        for raw in matches:
-            raw = raw.strip()
+    for p in patterns:
+        match = re.search(p, text)
+        if match:
+            raw = match.group(1)
             for fmt in ("%d/%m/%Y", "%d-%b-%Y", "%d-%b-%y", "%Y-%m-%d"):
                 try:
                     return datetime.strptime(raw, fmt).strftime("%Y-%m-%d")
-                except ValueError:
+                except:
                     pass
 
     return "UNKNOWN-DATE"
 
 
 def extract_invoice_number(text: str) -> str:
-    patterns = [
-        r"(?:Invoice\s*(?:No|Number|#)|Tax Invoice No)\s*[:\-]?\s*([A-Z0-9\-\/]+)",
-        r"Tax Invoice\s+([A-Z0-9][A-Z0-9\-\/]{3,})",
-    ]
-    for pattern in patterns:
-        match = re.search(pattern, text, re.IGNORECASE)
-        if match:
-            return clean_name(match.group(1)).replace(" ", "")
+    match = re.search(r"(?:Invoice\s*(?:No|#)|Tax Invoice No)\s*[:\-]?\s*([A-Z0-9\-]+)", text, re.IGNORECASE)
+    if match:
+        return match.group(1)
     return "UNKNOWN-INVOICE"
 
 
-def build_zip_bytes(results):
-    zip_buffer = io.BytesIO()
-    with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zf:
+def build_zip(results):
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as zf:
         for r in results:
             zf.writestr(r["filename"], r["pdf"])
-    zip_buffer.seek(0)
-    return zip_buffer.getvalue()
+    buffer.seek(0)
+    return buffer.getvalue()
 
 
 # -----------------------
@@ -166,37 +132,35 @@ if uploaded_files:
 
         try:
             text = read_pdf_text(file_bytes)
-        except Exception:
+        except:
             continue
 
         business = extract_business(text)
         abn = extract_abn(text)
-        invoice_date = parse_date(text)
+        date = parse_date(text)
         invoice_number = extract_invoice_number(text)
 
-        dedupe_key = f"{business}|{abn}|{invoice_date}|{invoice_number}"
+        key = f"{business}|{abn}|{date}|{invoice_number}"
 
-        if dedupe_key in seen:
+        if key in seen:
             duplicates.append({
                 "business": business,
                 "abn": abn,
-                "invoice_date": invoice_date,
+                "date": date,
                 "invoice_number": invoice_number,
-                "source_file": uploaded.name,
             })
             continue
 
-        seen.add(dedupe_key)
+        seen.add(key)
 
-        filename = clean_name(f"{business} - {abn} - {invoice_date}.pdf")
+        filename = clean_name(f"{business} - {abn} - {date}.pdf")
 
         results.append({
             "filename": filename,
             "business": business,
             "abn": abn,
-            "invoice_date": invoice_date,
+            "date": date,
             "invoice_number": invoice_number,
-            "source_file": uploaded.name,
             "pdf": file_bytes,
         })
 
@@ -206,57 +170,68 @@ if uploaded_files:
 
 
 # -----------------------
-# INVOICES
+# INVOICE LIST
 # -----------------------
 
 if st.session_state.results:
+
     st.subheader("Invoices")
 
     to_delete = None
 
     for i, r in enumerate(st.session_state.results):
-        row_col1, row_col2 = st.columns([8, 1])
 
-        with row_col1:
-            with st.expander(f"{i+1}. {r['filename']}"):
-                st.write(f"Business: {r['business']}")
-                st.write(f"ABN: {r['abn']}")
-                st.write(f"Date: {r['invoice_date']}")
-                st.write(f"Invoice #: {r['invoice_number']}")
-                st.write(f"Source file: {r['source_file']}")
+        col1, col2 = st.columns([9, 1])
 
-                st.download_button(
-                    "Download PDF",
-                    r["pdf"],
-                    file_name=r["filename"],
-                    mime="application/pdf",
-                    key=f"download_{i}",
-                )
+        with col1:
+            label = f"{i+1}. {r['filename']}"
+            st.write(label)
 
-        with row_col2:
-            st.write("")
-            st.write("")
-            if st.button("Delete", key=f"delete_{i}"):
-                to_delete = i
+        with col2:
+            delete_clicked = st.button("🗑️", key=f"delete_{i}")
+
+        if delete_clicked:
+            to_delete = i
+
+        with st.expander("View details"):
+            st.write(f"Business: {r['business']}")
+            st.write(f"ABN: {r['abn']}")
+            st.write(f"Date: {r['date']}")
+            st.write(f"Invoice #: {r['invoice_number']}")
+
+            st.download_button(
+                "Download PDF",
+                r["pdf"],
+                file_name=r["filename"],
+                mime="application/pdf",
+                key=f"download_{i}",
+            )
 
     if to_delete is not None:
         st.session_state.results.pop(to_delete)
         st.rerun()
 
+
+# -----------------------
+# SUMMARY
+# -----------------------
+
+if st.session_state.results:
+
     st.subheader("Summary")
+
     st.write(f"Total uploaded: {st.session_state.total_uploaded}")
-    st.write(f"Unique invoices kept: {len(st.session_state.results)}")
+    st.write(f"Unique invoices: {len(st.session_state.results)}")
     st.write(f"Duplicates removed: {len(st.session_state.duplicates)}")
 
     if st.session_state.duplicates:
-        st.subheader("Duplicate invoices removed")
-        st.dataframe(st.session_state.duplicates, use_container_width=True)
+        st.subheader("Duplicate invoices")
+        st.dataframe(st.session_state.duplicates)
 
-    zip_bytes = build_zip_bytes(st.session_state.results)
+    zip_bytes = build_zip(st.session_state.results)
 
     st.download_button(
         "Download All (ZIP)",
         zip_bytes,
-        "invoices.zip",
-        mime="application/zip",
+        "invoices.zip"
     )
