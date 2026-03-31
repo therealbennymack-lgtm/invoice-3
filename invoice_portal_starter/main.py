@@ -8,13 +8,17 @@ import streamlit as st
 
 st.set_page_config(page_title="Invoice Splitter", layout="wide")
 st.title("Invoice Splitter")
-st.write("Upload PDF invoices. The app will name each file as Business Name - ABN - Invoice Date.pdf and remove duplicates.")
+st.write("Upload PDF invoices. The app will extract Business Name, ABN, Invoice Date, and Invoice Number, remove duplicates, and let you preview each PDF.")
 
 ABN_REGEX = re.compile(r"\b(?:ABN|A\.B\.N\.?)[^\d]{0,10}(\d[\d\s]{9,20}\d)\b", re.IGNORECASE)
 DATE_REGEXES = [
     re.compile(r"\b(\d{1,2}/\d{1,2}/\d{4})\b"),
     re.compile(r"\b(\d{1,2}-[A-Za-z]{3}-\d{2,4})\b"),
     re.compile(r"\b(\d{4}-\d{2}-\d{2})\b"),
+]
+INVOICE_NO_REGEXES = [
+    re.compile(r"\b(?:Invoice\s*(?:No\.?|Number|#)|Tax\s*Invoice\s*(?:No\.?|Number|#))\s*[:\-]?\s*([A-Z0-9][A-Z0-9\-\/_]*)\b", re.IGNORECASE),
+    re.compile(r"\bTax\s+Invoice\s+([A-Z0-9][A-Z0-9\-\/_]{3,})\b", re.IGNORECASE),
 ]
 
 def clean_name(value: str) -> str:
@@ -23,7 +27,17 @@ def clean_name(value: str) -> str:
     return value[:150] or "UNKNOWN"
 
 def parse_date(text: str) -> str:
-    short = text[:5000]
+    short = text[:6000]
+    for anchor in [r"Invoice Date\s*[:\-]?\s*", r"Date\s*[:\-]?\s*"]:
+        for pattern in DATE_REGEXES:
+            match = re.search(anchor + pattern.pattern[2:-2], short, flags=re.IGNORECASE)
+            if match:
+                raw = match.group(1).strip()
+                for fmt in ("%d/%m/%Y", "%d-%b-%Y", "%d-%b-%y", "%Y-%m-%d"):
+                    try:
+                        return datetime.strptime(raw, fmt).strftime("%Y-%m-%d")
+                    except ValueError:
+                        pass
     for pattern in DATE_REGEXES:
         match = pattern.search(short)
         if match:
@@ -41,6 +55,14 @@ def extract_abn(text: str) -> str:
         return "UNKNOWNABN"
     digits = re.sub(r"\D", "", match.group(1))
     return digits if len(digits) == 11 else "UNKNOWNABN"
+
+def extract_invoice_number(text: str) -> str:
+    short = text[:6000]
+    for pattern in INVOICE_NO_REGEXES:
+        match = pattern.search(short)
+        if match:
+            return clean_name(match.group(1)).replace(" ", "")
+    return "UNKNOWN-INVOICE"
 
 def extract_business(text: str) -> str:
     lines = [re.sub(r"\s+", " ", x).strip() for x in text.splitlines() if x.strip()]
@@ -82,25 +104,69 @@ if uploaded_files:
             business = extract_business(text)
             abn = extract_abn(text)
             invoice_date = parse_date(text)
+            invoice_number = extract_invoice_number(text)
 
-            dedupe_key = f"{business}|{abn}|{invoice_date}"
+            dedupe_key = f"{business}|{abn}|{invoice_date}|{invoice_number}"
             if dedupe_key in seen:
                 continue
             seen.add(dedupe_key)
 
             filename = clean_name(f"{business} - {abn} - {invoice_date}.pdf")
             zf.writestr(filename, file_bytes)
+
             results.append({
                 "filename": filename,
                 "business": business,
                 "abn": abn,
-                "date": invoice_date,
+                "invoice_date": invoice_date,
+                "invoice_number": invoice_number,
+                "pdf_bytes": file_bytes,
             })
 
     zip_buffer.seek(0)
 
-    st.subheader("Files created")
-    st.dataframe(results, use_container_width=True)
+    st.subheader("Invoices")
+    for i, item in enumerate(results, start=1):
+        with st.expander(f"{i}. {item['filename']}"):
+            col1, col2 = st.columns(2)
+            with col1:
+                st.write(f"**Business Name:** {item['business']}")
+                st.write(f"**ABN:** {item['abn']}")
+                st.write(f"**Invoice Date:** {item['invoice_date']}")
+                st.write(f"**Invoice Number:** {item['invoice_number']}")
+            with col2:
+                st.download_button(
+                    label="Download this PDF",
+                    data=item["pdf_bytes"],
+                    file_name=item["filename"],
+                    mime="application/pdf",
+                    key=f"download_{i}",
+                )
+
+            st.write("**PDF Preview**")
+            pdf_base64 = item["pdf_bytes"].hex()
+            pdf_bytes = bytes.fromhex(pdf_base64)
+            st.download_button(
+                label="Open PDF in browser",
+                data=pdf_bytes,
+                file_name=item["filename"],
+                mime="application/pdf",
+                key=f"open_{i}",
+            )
+
+    table_rows = [
+        {
+            "File Name": item["filename"],
+            "Business Name": item["business"],
+            "ABN": item["abn"],
+            "Invoice Date": item["invoice_date"],
+            "Invoice Number": item["invoice_number"],
+        }
+        for item in results
+    ]
+
+    st.subheader("Summary")
+    st.dataframe(table_rows, use_container_width=True)
 
     st.download_button(
         label="Download ZIP",
