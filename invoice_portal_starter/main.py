@@ -8,7 +8,7 @@ import streamlit as st
 
 st.set_page_config(page_title="Invoice Splitter", layout="wide")
 st.title("Invoice Splitter")
-st.write("Upload PDF invoices, remove bad files, detect duplicates, and download cleaned invoice PDFs.")
+st.write("Upload PDF invoices, remove duplicates, delete bad invoice rows, and download cleaned invoice PDFs.")
 
 # -----------------------
 # HELPERS
@@ -27,22 +27,6 @@ def read_pdf_text(file_bytes: bytes) -> str:
         text += page.get_text()
     doc.close()
     return text
-
-
-def is_likely_invoice(text: str) -> bool:
-    text_lower = text.lower()
-    invoice_signals = [
-        "invoice",
-        "tax invoice",
-        "invoice no",
-        "invoice number",
-        "abn",
-        "amount due",
-        "subtotal",
-        "total",
-    ]
-    score = sum(1 for signal in invoice_signals if signal in text_lower)
-    return score >= 2
 
 
 def extract_business(text: str) -> str:
@@ -143,6 +127,29 @@ def extract_invoice_number(text: str) -> str:
     return "UNKNOWN-INVOICE"
 
 
+def build_zip_bytes(results):
+    zip_buffer = io.BytesIO()
+    with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zf:
+        for r in results:
+            zf.writestr(r["filename"], r["pdf"])
+    zip_buffer.seek(0)
+    return zip_buffer.getvalue()
+
+
+# -----------------------
+# SESSION STATE
+# -----------------------
+
+if "results" not in st.session_state:
+    st.session_state.results = []
+
+if "duplicates" not in st.session_state:
+    st.session_state.duplicates = []
+
+if "total_uploaded" not in st.session_state:
+    st.session_state.total_uploaded = 0
+
+
 # -----------------------
 # UPLOAD
 # -----------------------
@@ -150,138 +157,106 @@ def extract_invoice_number(text: str) -> str:
 uploaded_files = st.file_uploader("Upload PDF invoices", type=["pdf"], accept_multiple_files=True)
 
 if uploaded_files:
-    st.subheader("Uploaded files")
+    seen = set()
+    results = []
+    duplicates = []
 
-    file_records = []
-    for idx, uploaded in enumerate(uploaded_files):
+    for uploaded in uploaded_files:
         file_bytes = uploaded.read()
+
         try:
             text = read_pdf_text(file_bytes)
-            corrupt = False
         except Exception:
-            text = ""
-            corrupt = True
+            continue
 
-        likely_invoice = is_likely_invoice(text) if not corrupt else False
+        business = extract_business(text)
+        abn = extract_abn(text)
+        invoice_date = parse_date(text)
+        invoice_number = extract_invoice_number(text)
 
-        file_records.append({
-            "idx": idx,
-            "name": uploaded.name,
-            "bytes": file_bytes,
-            "text": text,
-            "corrupt": corrupt,
-            "likely_invoice": likely_invoice,
+        dedupe_key = f"{business}|{abn}|{invoice_date}|{invoice_number}"
+
+        if dedupe_key in seen:
+            duplicates.append({
+                "business": business,
+                "abn": abn,
+                "invoice_date": invoice_date,
+                "invoice_number": invoice_number,
+                "source_file": uploaded.name,
+            })
+            continue
+
+        seen.add(dedupe_key)
+
+        filename = clean_name(f"{business} - {abn} - {invoice_date}.pdf")
+
+        results.append({
+            "filename": filename,
+            "business": business,
+            "abn": abn,
+            "invoice_date": invoice_date,
+            "invoice_number": invoice_number,
+            "source_file": uploaded.name,
+            "pdf": file_bytes,
         })
 
-    st.write("Tick any file you want to exclude before processing.")
+    st.session_state.results = results
+    st.session_state.duplicates = duplicates
+    st.session_state.total_uploaded = len(uploaded_files)
 
-    files_to_process = []
-    for record in file_records:
-        label = record["name"]
-        if record["corrupt"]:
-            label += "  |  CORRUPT PDF"
-        elif not record["likely_invoice"]:
-            label += "  |  POSSIBLY NOT AN INVOICE"
 
-        exclude = st.checkbox(f"Exclude: {label}", key=f"exclude_{record['idx']}")
-        if not exclude:
-            files_to_process.append(record)
+# -----------------------
+# INVOICES
+# -----------------------
 
-    if st.button("Process remaining files"):
-        if not files_to_process:
-            st.error("No files selected for processing.")
-        else:
-            zip_buffer = io.BytesIO()
-            seen = set()
-            results = []
-            duplicates = []
-            excluded = []
+if st.session_state.results:
+    st.subheader("Invoices")
 
-            with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zf:
-                for record in files_to_process:
-                    text = record["text"]
-                    file_bytes = record["bytes"]
+    to_delete = None
 
-                    if record["corrupt"]:
-                        excluded.append({
-                            "file": record["name"],
-                            "reason": "Corrupt PDF",
-                        })
-                        continue
+    for i, r in enumerate(st.session_state.results):
+        row_col1, row_col2 = st.columns([8, 1])
 
-                    if not record["likely_invoice"]:
-                        excluded.append({
-                            "file": record["name"],
-                            "reason": "Not recognised as an invoice",
-                        })
-                        continue
+        with row_col1:
+            with st.expander(f"{i+1}. {r['filename']}"):
+                st.write(f"Business: {r['business']}")
+                st.write(f"ABN: {r['abn']}")
+                st.write(f"Date: {r['invoice_date']}")
+                st.write(f"Invoice #: {r['invoice_number']}")
+                st.write(f"Source file: {r['source_file']}")
 
-                    business = extract_business(text)
-                    abn = extract_abn(text)
-                    invoice_date = parse_date(text)
-                    invoice_number = extract_invoice_number(text)
+                st.download_button(
+                    "Download PDF",
+                    r["pdf"],
+                    file_name=r["filename"],
+                    mime="application/pdf",
+                    key=f"download_{i}",
+                )
 
-                    dedupe_key = f"{business}|{abn}|{invoice_date}|{invoice_number}"
+        with row_col2:
+            st.write("")
+            st.write("")
+            if st.button("Delete", key=f"delete_{i}"):
+                to_delete = i
 
-                    if dedupe_key in seen:
-                        duplicates.append({
-                            "business": business,
-                            "abn": abn,
-                            "invoice_date": invoice_date,
-                            "invoice_number": invoice_number,
-                            "file": record["name"],
-                        })
-                        continue
+    if to_delete is not None:
+        st.session_state.results.pop(to_delete)
+        st.rerun()
 
-                    seen.add(dedupe_key)
+    st.subheader("Summary")
+    st.write(f"Total uploaded: {st.session_state.total_uploaded}")
+    st.write(f"Unique invoices kept: {len(st.session_state.results)}")
+    st.write(f"Duplicates removed: {len(st.session_state.duplicates)}")
 
-                    filename = clean_name(f"{business} - {abn} - {invoice_date}.pdf")
-                    zf.writestr(filename, file_bytes)
+    if st.session_state.duplicates:
+        st.subheader("Duplicate invoices removed")
+        st.dataframe(st.session_state.duplicates, use_container_width=True)
 
-                    results.append({
-                        "filename": filename,
-                        "business": business,
-                        "abn": abn,
-                        "invoice_date": invoice_date,
-                        "invoice_number": invoice_number,
-                        "pdf": file_bytes,
-                    })
+    zip_bytes = build_zip_bytes(st.session_state.results)
 
-            zip_buffer.seek(0)
-
-            st.subheader("Invoices")
-            for r in results:
-                with st.expander(r["filename"]):
-                    st.write(f"Business: {r['business']}")
-                    st.write(f"ABN: {r['abn']}")
-                    st.write(f"Date: {r['invoice_date']}")
-                    st.write(f"Invoice #: {r['invoice_number']}")
-                    st.download_button(
-                        "Download PDF",
-                        r["pdf"],
-                        file_name=r["filename"],
-                        mime="application/pdf",
-                        key=f"download_{r['filename']}",
-                    )
-
-            st.subheader("Summary")
-            st.write(f"Total uploaded: {len(uploaded_files)}")
-            st.write(f"Files processed: {len(files_to_process)}")
-            st.write(f"Unique invoices kept: {len(results)}")
-            st.write(f"Duplicates removed: {len(duplicates)}")
-            st.write(f"Excluded files: {len(excluded)}")
-
-            if duplicates:
-                st.subheader("Duplicate invoices removed")
-                st.dataframe(duplicates, use_container_width=True)
-
-            if excluded:
-                st.subheader("Excluded files")
-                st.dataframe(excluded, use_container_width=True)
-
-            st.download_button(
-                "Download All (ZIP)",
-                zip_buffer.getvalue(),
-                "invoices.zip",
-                mime="application/zip",
-            )
+    st.download_button(
+        "Download All (ZIP)",
+        zip_bytes,
+        "invoices.zip",
+        mime="application/zip",
+    )
