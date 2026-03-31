@@ -1,7 +1,6 @@
 import io
 import re
 import zipfile
-import base64
 from datetime import datetime
 
 import fitz
@@ -27,6 +26,19 @@ def read_pdf_text(file_bytes: bytes) -> str:
         text += page.get_text()
     doc.close()
     return text
+
+
+def pdf_to_images(file_bytes: bytes, zoom: float = 1.6):
+    doc = fitz.open(stream=file_bytes, filetype="pdf")
+    images = []
+    matrix = fitz.Matrix(zoom, zoom)
+
+    for page in doc:
+        pix = page.get_pixmap(matrix=matrix, alpha=False)
+        images.append(pix.tobytes("png"))
+
+    doc.close()
+    return images
 
 
 def extract_business(text: str) -> str:
@@ -121,18 +133,6 @@ def has_unknown_fields(item: dict) -> bool:
     )
 
 
-def pdf_embed_html(pdf_bytes: bytes, height: int = 900) -> str:
-    b64 = base64.b64encode(pdf_bytes).decode("utf-8")
-    return f'''
-        <iframe
-            src="data:application/pdf;base64,{b64}"
-            width="100%"
-            height="{height}"
-            type="application/pdf">
-        </iframe>
-    '''
-
-
 # -----------------------
 # SESSION STATE
 # -----------------------
@@ -169,6 +169,7 @@ if uploaded_files:
 
         try:
             text = read_pdf_text(file_bytes)
+            page_images = pdf_to_images(file_bytes)
         except Exception:
             continue
 
@@ -198,6 +199,7 @@ if uploaded_files:
             "invoice_number": invoice_number,
             "pdf": file_bytes,
             "text": text,
+            "page_images": page_images,
         }
         item["filename"] = build_filename(item)
         results.append(item)
@@ -213,11 +215,7 @@ if uploaded_files:
 # MAIN LAYOUT
 # -----------------------
 
-left_col, right_col = st.columns([1.2, 1])
-
-# -----------------------
-# LEFT SIDE: INVOICES
-# -----------------------
+left_col, right_col = st.columns([1.1, 1])
 
 with left_col:
     if st.session_state.results:
@@ -227,12 +225,7 @@ with left_col:
             row1, row2, row3 = st.columns([8, 1, 1])
 
             with row1:
-                selected = st.button(
-                    f"{i+1}. {r['filename']}",
-                    key=f"select_{i}",
-                    use_container_width=True
-                )
-                if selected:
+                if st.button(f"{i+1}. {r['filename']}", key=f"select_{i}", use_container_width=True):
                     st.session_state.selected_invoice = i
 
             with row2:
@@ -243,6 +236,21 @@ with left_col:
                 if st.button("Delete", key=f"delete_{i}", use_container_width=True):
                     st.session_state.pending_delete = i
                     st.rerun()
+
+            with st.expander("View details"):
+                st.write(f"Business: {r['business']}")
+                st.write(f"ABN: {r['abn']}")
+                st.write(f"Date: {r['date']}")
+                st.write(f"Invoice #: {r['invoice_number']}")
+
+                st.download_button(
+                    "Download PDF",
+                    r["pdf"],
+                    file_name=r["filename"],
+                    mime="application/pdf",
+                    key=f"download_{i}",
+                    use_container_width=True,
+                )
 
             if st.session_state.pending_delete == i:
                 st.warning(f"Are you sure you want to delete: {r['filename']}?")
@@ -283,10 +291,6 @@ with left_col:
             use_container_width=True,
         )
 
-# -----------------------
-# RIGHT SIDE: VIEW / FIX
-# -----------------------
-
 with right_col:
     if st.session_state.results and st.session_state.selected_invoice is not None:
         idx = st.session_state.selected_invoice
@@ -295,11 +299,18 @@ with right_col:
         st.subheader("Invoice Viewer")
 
         if has_unknown_fields(item):
-            st.warning("Some fields are missing. Review the PDF and update the fields below.")
+            st.warning("Some fields are missing. Review the invoice pages below and update the fields.")
         else:
             st.success("All key fields were detected.")
 
-        st.markdown(pdf_embed_html(item["pdf"], height=850), unsafe_allow_html=True)
+        st.download_button(
+            "Download Selected PDF",
+            data=item["pdf"],
+            file_name=item["filename"],
+            mime="application/pdf",
+            use_container_width=True,
+            key=f"open_selected_{idx}",
+        )
 
         st.subheader("Edit extracted fields")
 
@@ -316,6 +327,11 @@ with right_col:
             st.session_state.results[idx]["filename"] = build_filename(st.session_state.results[idx])
             st.success("Invoice updated.")
             st.rerun()
+
+        st.subheader("PDF Pages")
+        for page_num, page_img in enumerate(item["page_images"], start=1):
+            st.markdown(f"**Page {page_num}**")
+            st.image(page_img, use_container_width=True)
 
         with st.expander("View extracted text"):
             st.text(item["text"][:12000])
