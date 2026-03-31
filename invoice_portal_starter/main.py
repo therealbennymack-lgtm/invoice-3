@@ -152,6 +152,8 @@ if "pending_delete" not in st.session_state:
 if "selected_invoice" not in st.session_state:
     st.session_state.selected_invoice = None
 
+if "save_message" not in st.session_state:
+    st.session_state.save_message = ""
 
 # -----------------------
 # UPLOAD
@@ -209,7 +211,7 @@ if uploaded_files:
     st.session_state.total_uploaded = len(uploaded_files)
     st.session_state.pending_delete = None
     st.session_state.selected_invoice = 0 if results else None
-
+    st.session_state.save_message = ""
 
 # -----------------------
 # MAIN LAYOUT
@@ -227,10 +229,12 @@ with left_col:
             with row1:
                 if st.button(f"{i+1}. {r['filename']}", key=f"select_{i}", use_container_width=True):
                     st.session_state.selected_invoice = i
+                    st.session_state.save_message = ""
 
             with row2:
                 if st.button("Edit", key=f"edit_{i}", use_container_width=True):
                     st.session_state.selected_invoice = i
+                    st.session_state.save_message = ""
 
             with row3:
                 if st.button("Delete", key=f"delete_{i}", use_container_width=True):
@@ -303,6 +307,9 @@ with right_col:
         else:
             st.success("All key fields were detected.")
 
+        if st.session_state.save_message:
+            st.success(st.session_state.save_message)
+
         st.download_button(
             "Download Selected PDF",
             data=item["pdf"],
@@ -314,18 +321,32 @@ with right_col:
 
         st.subheader("Edit extracted fields")
 
-        new_business = st.text_input("Business Name", value=item["business"], key=f"business_{idx}")
-        new_abn = st.text_input("ABN", value=item["abn"], key=f"abn_{idx}")
-        new_date = st.text_input("Invoice Date", value=item["date"], key=f"date_{idx}")
-        new_invoice_number = st.text_input("Invoice Number", value=item["invoice_number"], key=f"invoice_no_{idx}")
+        business_key = f"business_input_{idx}"
+        abn_key = f"abn_input_{idx}"
+        date_key = f"date_input_{idx}"
+        invoice_key = f"invoice_input_{idx}"
+
+        if business_key not in st.session_state:
+            st.session_state[business_key] = item["business"]
+        if abn_key not in st.session_state:
+            st.session_state[abn_key] = item["abn"]
+        if date_key not in st.session_state:
+            st.session_state[date_key] = item["date"]
+        if invoice_key not in st.session_state:
+            st.session_state[invoice_key] = item["invoice_number"]
+
+        st.text_input("Business Name", key=business_key)
+        st.text_input("ABN", key=abn_key)
+        st.text_input("Invoice Date", key=date_key)
+        st.text_input("Invoice Number", key=invoice_key)
 
         if st.button("Save changes", key=f"save_{idx}", use_container_width=True):
-            st.session_state.results[idx]["business"] = new_business.strip() or "UNKNOWN BUSINESS"
-            st.session_state.results[idx]["abn"] = new_abn.strip() or "UNKNOWNABN"
-            st.session_state.results[idx]["date"] = new_date.strip() or "UNKNOWN-DATE"
-            st.session_state.results[idx]["invoice_number"] = new_invoice_number.strip() or "UNKNOWN-INVOICE"
+            st.session_state.results[idx]["business"] = st.session_state[business_key].strip() or "UNKNOWN BUSINESS"
+            st.session_state.results[idx]["abn"] = st.session_state[abn_key].strip() or "UNKNOWNABN"
+            st.session_state.results[idx]["date"] = st.session_state[date_key].strip() or "UNKNOWN-DATE"
+            st.session_state.results[idx]["invoice_number"] = st.session_state[invoice_key].strip() or "UNKNOWN-INVOICE"
             st.session_state.results[idx]["filename"] = build_filename(st.session_state.results[idx])
-            st.success("Invoice updated.")
+            st.session_state.save_message = "Invoice updated successfully."
             st.rerun()
 
         st.subheader("PDF Pages")
