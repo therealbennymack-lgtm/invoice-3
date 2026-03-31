@@ -28,7 +28,7 @@ def read_pdf_text(file_bytes: bytes) -> str:
     return text
 
 
-def pdf_to_images(file_bytes: bytes, zoom: float = 1.4):
+def pdf_to_images(file_bytes: bytes, zoom: float = 1.3):
     doc = fitz.open(stream=file_bytes, filetype="pdf")
     images = []
     matrix = fitz.Matrix(zoom, zoom)
@@ -144,11 +144,11 @@ if "duplicates" not in st.session_state:
 if "total_uploaded" not in st.session_state:
     st.session_state.total_uploaded = 0
 
+if "selected_invoice" not in st.session_state:
+    st.session_state.selected_invoice = 0
+
 if "pending_delete" not in st.session_state:
     st.session_state.pending_delete = None
-
-if "selected_invoice" not in st.session_state:
-    st.session_state.selected_invoice = None
 
 if "save_message" not in st.session_state:
     st.session_state.save_message = ""
@@ -207,37 +207,40 @@ if uploaded_files:
     st.session_state.results = results
     st.session_state.duplicates = duplicates
     st.session_state.total_uploaded = len(uploaded_files)
+    st.session_state.selected_invoice = 0
     st.session_state.pending_delete = None
-    st.session_state.selected_invoice = 0 if results else None
     st.session_state.save_message = ""
 
 # -----------------------
-# MAIN LAYOUT
+# PAGE LAYOUT
 # -----------------------
 
-left_col, right_col = st.columns([1.1, 1])
+left_col, right_col = st.columns([1.15, 1])
+
+# -----------------------
+# LEFT SIDE
+# -----------------------
 
 with left_col:
     if st.session_state.results:
         st.subheader("Invoices")
 
         for i, r in enumerate(st.session_state.results):
-            row1, row2, row3 = st.columns([8, 1, 1])
+            c1, c2, c3 = st.columns([8, 1, 1])
 
-            with row1:
+            with c1:
                 if st.button(f"{i+1}. {r['filename']}", key=f"select_{i}", use_container_width=True):
                     st.session_state.selected_invoice = i
                     st.session_state.save_message = ""
 
-            with row2:
+            with c2:
                 if st.button("Edit", key=f"edit_{i}", use_container_width=True):
                     st.session_state.selected_invoice = i
                     st.session_state.save_message = ""
 
-            with row3:
+            with c3:
                 if st.button("Delete", key=f"delete_{i}", use_container_width=True):
                     st.session_state.pending_delete = i
-                    st.rerun()
 
             with st.expander("View details"):
                 st.write(f"Business: {r['business']}")
@@ -257,19 +260,21 @@ with left_col:
             if st.session_state.pending_delete == i:
                 st.warning(f"Are you sure you want to delete: {r['filename']}?")
 
-                confirm_col, cancel_col = st.columns(2)
+                d1, d2 = st.columns(2)
 
-                with confirm_col:
+                with d1:
                     if st.button("Confirm Delete", key=f"confirm_delete_{i}", use_container_width=True):
                         st.session_state.results.pop(i)
-                        if st.session_state.selected_invoice == i:
-                            st.session_state.selected_invoice = 0 if st.session_state.results else None
-                        elif st.session_state.selected_invoice is not None and st.session_state.selected_invoice > i:
-                            st.session_state.selected_invoice -= 1
                         st.session_state.pending_delete = None
+
+                        if not st.session_state.results:
+                            st.session_state.selected_invoice = 0
+                        elif st.session_state.selected_invoice >= len(st.session_state.results):
+                            st.session_state.selected_invoice = len(st.session_state.results) - 1
+
                         st.rerun()
 
-                with cancel_col:
+                with d2:
                     if st.button("Cancel", key=f"cancel_delete_{i}", use_container_width=True):
                         st.session_state.pending_delete = None
                         st.rerun()
@@ -293,8 +298,12 @@ with left_col:
             use_container_width=True,
         )
 
+# -----------------------
+# RIGHT SIDE
+# -----------------------
+
 with right_col:
-    if st.session_state.results and st.session_state.selected_invoice is not None:
+    if st.session_state.results:
         idx = st.session_state.selected_invoice
         item = st.session_state.results[idx]
 
@@ -319,19 +328,16 @@ with right_col:
 
         st.subheader("Edit extracted fields")
 
-        with st.form(key=f"edit_form_{idx}"):
-            business_val = st.text_input("Business Name", value=item["business"])
-            abn_val = st.text_input("ABN", value=item["abn"])
-            date_val = st.text_input("Invoice Date", value=item["date"])
-            invoice_val = st.text_input("Invoice Number", value=item["invoice_number"])
+        form_business = st.text_input("Business Name", value=item["business"], key=f"business_field_{idx}")
+        form_abn = st.text_input("ABN", value=item["abn"], key=f"abn_field_{idx}")
+        form_date = st.text_input("Invoice Date", value=item["date"], key=f"date_field_{idx}")
+        form_invoice = st.text_input("Invoice Number", value=item["invoice_number"], key=f"invoice_field_{idx}")
 
-            submitted = st.form_submit_button("Save changes", use_container_width=True)
-
-        if submitted:
-            st.session_state.results[idx]["business"] = business_val.strip() or "UNKNOWN BUSINESS"
-            st.session_state.results[idx]["abn"] = abn_val.strip() or "UNKNOWNABN"
-            st.session_state.results[idx]["date"] = date_val.strip() or "UNKNOWN-DATE"
-            st.session_state.results[idx]["invoice_number"] = invoice_val.strip() or "UNKNOWN-INVOICE"
+        if st.button("Save changes", key=f"save_button_{idx}", use_container_width=True):
+            st.session_state.results[idx]["business"] = form_business.strip() or "UNKNOWN BUSINESS"
+            st.session_state.results[idx]["abn"] = form_abn.strip() or "UNKNOWNABN"
+            st.session_state.results[idx]["date"] = form_date.strip() or "UNKNOWN-DATE"
+            st.session_state.results[idx]["invoice_number"] = form_invoice.strip() or "UNKNOWN-INVOICE"
             st.session_state.results[idx]["filename"] = build_filename(st.session_state.results[idx])
             st.session_state.save_message = "Invoice updated successfully."
             st.rerun()
