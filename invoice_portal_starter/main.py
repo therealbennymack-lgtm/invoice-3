@@ -27,10 +27,26 @@ def clean_name(value: str) -> str:
     return value[:150] or "UNKNOWN"
 
 def parse_date(text: str) -> str:
-    short = text[:6000]
-    for anchor in [r"Invoice Date\s*[:\-]?\s*", r"Date\s*[:\-]?\s*"]:
-        for pattern in DATE_REGEXES:
-            match = re.search(anchor + pattern.pattern[2:-2], short, flags=re.IGNORECASE)
+    import re
+    from datetime import datetime
+
+    lines = [re.sub(r"\s+", " ", x).strip() for x in text.splitlines() if x.strip()]
+    full_text = "\n".join(lines)
+
+    date_patterns = [
+        r"(\d{1,2}/\d{1,2}/\d{4})",
+        r"(\d{1,2}-[A-Za-z]{3}-\d{2,4})",
+        r"(\d{4}-\d{2}-\d{2})",
+    ]
+
+    anchor_patterns = [
+        r"Invoice Date\s*[:\-]?\s*",
+        r"Date\s*[:\-]?\s*",
+    ]
+
+    for anchor in anchor_patterns:
+        for dp in date_patterns:
+            match = re.search(anchor + dp, full_text, re.IGNORECASE)
             if match:
                 raw = match.group(1).strip()
                 for fmt in ("%d/%m/%Y", "%d-%b-%Y", "%d-%b-%y", "%Y-%m-%d"):
@@ -38,23 +54,41 @@ def parse_date(text: str) -> str:
                         return datetime.strptime(raw, fmt).strftime("%Y-%m-%d")
                     except ValueError:
                         pass
-    for pattern in DATE_REGEXES:
-        match = pattern.search(short)
-        if match:
-            raw = match.group(1).strip()
+
+    # Fallback: first valid date anywhere in text
+    for dp in date_patterns:
+        matches = re.findall(dp, full_text)
+        for raw in matches:
+            raw = raw.strip()
             for fmt in ("%d/%m/%Y", "%d-%b-%Y", "%d-%b-%y", "%Y-%m-%d"):
                 try:
                     return datetime.strptime(raw, fmt).strftime("%Y-%m-%d")
                 except ValueError:
                     pass
+
     return "UNKNOWN-DATE"
 
 def extract_abn(text: str) -> str:
-    match = ABN_REGEX.search(text)
-    if not match:
-        return "UNKNOWNABN"
-    digits = re.sub(r"\D", "", match.group(1))
-    return digits if len(digits) == 11 else "UNKNOWNABN"
+    import re
+
+    lines = [re.sub(r"\s+", " ", x).strip() for x in text.splitlines() if x.strip()]
+    full_text = " ".join(lines)
+
+    # Priority 1: ABN label followed by number
+    match = re.search(r"(?:ABN|A\.B\.N\.?)\s*[:\-]?\s*(?:ABN\s*[:\-]?\s*)?(\d[\d\s]{9,20}\d)", full_text, re.IGNORECASE)
+    if match:
+        digits = re.sub(r"\D", "", match.group(1))
+        if len(digits) == 11:
+            return digits
+
+    # Priority 2: any 11-digit ABN-like number
+    candidates = re.findall(r"\b\d{2}\s?\d{3}\s?\d{3}\s?\d{3}\b", full_text)
+    for candidate in candidates:
+        digits = re.sub(r"\D", "", candidate)
+        if len(digits) == 11:
+            return digits
+
+    return "UNKNOWNABN"
 
 def extract_invoice_number(text: str) -> str:
     short = text[:6000]
