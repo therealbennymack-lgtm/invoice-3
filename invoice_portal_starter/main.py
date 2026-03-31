@@ -9,15 +9,10 @@ import streamlit as st
 st.set_page_config(page_title="Invoice Splitter", layout="wide")
 st.title("Invoice Splitter")
 
-# -----------------------
-# HELPERS
-# -----------------------
-
 def clean_name(value: str) -> str:
     value = re.sub(r"\s+", " ", value).strip()
     value = re.sub(r'[\\/:*?"<>|]+', "_", value)
     return value[:150] or "UNKNOWN"
-
 
 def read_pdf_text(file_bytes: bytes) -> str:
     doc = fitz.open(stream=file_bytes, filetype="pdf")
@@ -27,8 +22,7 @@ def read_pdf_text(file_bytes: bytes) -> str:
     doc.close()
     return text
 
-
-def pdf_to_images(file_bytes: bytes, zoom: float = 1.3):
+def pdf_to_images(file_bytes: bytes, zoom: float = 1.2):
     doc = fitz.open(stream=file_bytes, filetype="pdf")
     images = []
     matrix = fitz.Matrix(zoom, zoom)
@@ -37,7 +31,6 @@ def pdf_to_images(file_bytes: bytes, zoom: float = 1.3):
         images.append(pix.tobytes("png"))
     doc.close()
     return images
-
 
 def extract_business(text: str) -> str:
     text_lower = text.lower()
@@ -60,7 +53,6 @@ def extract_business(text: str) -> str:
 
     return "UNKNOWN BUSINESS"
 
-
 def extract_abn(text: str) -> str:
     match = re.search(r"(?:ABN)\s*[:\-]?\s*(?:ABN\s*[:\-]?\s*)?(\d[\d\s]{9,20}\d)", text, re.IGNORECASE)
     if match:
@@ -75,7 +67,6 @@ def extract_abn(text: str) -> str:
             return digits
 
     return "UNKNOWNABN"
-
 
 def parse_date(text: str) -> str:
     patterns = [
@@ -96,7 +87,6 @@ def parse_date(text: str) -> str:
 
     return "UNKNOWN-DATE"
 
-
 def extract_invoice_number(text: str) -> str:
     patterns = [
         r"(?:Invoice\s*(?:No|Number|#)|Tax Invoice No)\s*[:\-]?\s*([A-Z0-9\-\/]+)",
@@ -108,10 +98,8 @@ def extract_invoice_number(text: str) -> str:
             return clean_name(match.group(1)).replace(" ", "")
     return "UNKNOWN-INVOICE"
 
-
 def build_filename(item: dict) -> str:
     return clean_name(f"{item['business']} - {item['abn']} - {item['date']}.pdf")
-
 
 def build_zip(results):
     buffer = io.BytesIO()
@@ -121,7 +109,6 @@ def build_zip(results):
     buffer.seek(0)
     return buffer.getvalue()
 
-
 def has_unknown_fields(item: dict) -> bool:
     return (
         item["business"] == "UNKNOWN BUSINESS"
@@ -129,11 +116,6 @@ def has_unknown_fields(item: dict) -> bool:
         or item["date"] == "UNKNOWN-DATE"
         or item["invoice_number"] == "UNKNOWN-INVOICE"
     )
-
-
-# -----------------------
-# SESSION STATE
-# -----------------------
 
 if "results" not in st.session_state:
     st.session_state.results = []
@@ -144,18 +126,8 @@ if "duplicates" not in st.session_state:
 if "total_uploaded" not in st.session_state:
     st.session_state.total_uploaded = 0
 
-if "selected_invoice" not in st.session_state:
-    st.session_state.selected_invoice = 0
-
 if "pending_delete" not in st.session_state:
     st.session_state.pending_delete = None
-
-if "save_message" not in st.session_state:
-    st.session_state.save_message = ""
-
-# -----------------------
-# UPLOAD
-# -----------------------
 
 uploaded_files = st.file_uploader("Upload PDF invoices", type=["pdf"], accept_multiple_files=True)
 
@@ -186,6 +158,7 @@ if uploaded_files:
                 "abn": abn,
                 "date": date,
                 "invoice_number": invoice_number,
+                "source_file": uploaded.name,
             })
             continue
 
@@ -200,6 +173,7 @@ if uploaded_files:
             "pdf": file_bytes,
             "text": text,
             "page_images": page_images,
+            "source_file": uploaded.name,
         }
         item["filename"] = build_filename(item)
         results.append(item)
@@ -207,145 +181,92 @@ if uploaded_files:
     st.session_state.results = results
     st.session_state.duplicates = duplicates
     st.session_state.total_uploaded = len(uploaded_files)
-    st.session_state.selected_invoice = 0
     st.session_state.pending_delete = None
-    st.session_state.save_message = ""
 
-# -----------------------
-# PAGE LAYOUT
-# -----------------------
+if st.session_state.results:
+    st.subheader("Invoices")
 
-left_col, right_col = st.columns([1.15, 1])
+    for i, r in enumerate(st.session_state.results):
+        row1, row2 = st.columns([9, 1])
 
-# -----------------------
-# LEFT SIDE
-# -----------------------
+        with row1:
+            st.write(f"{i+1}. {r['filename']}")
 
-with left_col:
-    if st.session_state.results:
-        st.subheader("Invoices")
+        with row2:
+            if st.button("Delete", key=f"delete_{i}", use_container_width=True):
+                st.session_state.pending_delete = i
 
-        for i, r in enumerate(st.session_state.results):
-            c1, c2, c3 = st.columns([8, 1, 1])
-
+        if st.session_state.pending_delete == i:
+            st.warning(f"Are you sure you want to delete {r['filename']}?")
+            c1, c2 = st.columns(2)
             with c1:
-                if st.button(f"{i+1}. {r['filename']}", key=f"select_{i}", use_container_width=True):
-                    st.session_state.selected_invoice = i
-                    st.session_state.save_message = ""
-
+                if st.button("Confirm Delete", key=f"confirm_delete_{i}", use_container_width=True):
+                    st.session_state.results.pop(i)
+                    st.session_state.pending_delete = None
+                    st.rerun()
             with c2:
-                if st.button("Edit", key=f"edit_{i}", use_container_width=True):
-                    st.session_state.selected_invoice = i
-                    st.session_state.save_message = ""
+                if st.button("Cancel", key=f"cancel_delete_{i}", use_container_width=True):
+                    st.session_state.pending_delete = None
+                    st.rerun()
 
-            with c3:
-                if st.button("Delete", key=f"delete_{i}", use_container_width=True):
-                    st.session_state.pending_delete = i
+        with st.expander("View details and edit"):
+            if has_unknown_fields(r):
+                st.warning("Some fields are missing. Update them below.")
+            else:
+                st.success("All key fields were detected.")
 
-            with st.expander("View details"):
-                st.write(f"Business: {r['business']}")
-                st.write(f"ABN: {r['abn']}")
-                st.write(f"Date: {r['date']}")
-                st.write(f"Invoice #: {r['invoice_number']}")
+            st.write(f"Source file: {r['source_file']}")
+            st.write(f"Current file name: {r['filename']}")
 
-                st.download_button(
-                    "Download PDF",
-                    r["pdf"],
-                    file_name=r["filename"],
-                    mime="application/pdf",
-                    key=f"download_{i}",
-                    use_container_width=True,
-                )
+            with st.form(key=f"edit_form_{i}"):
+                business_val = st.text_input("Business Name", value=r["business"])
+                abn_val = st.text_input("ABN", value=r["abn"])
+                date_val = st.text_input("Invoice Date", value=r["date"])
+                invoice_val = st.text_input("Invoice Number", value=r["invoice_number"])
 
-            if st.session_state.pending_delete == i:
-                st.warning(f"Are you sure you want to delete: {r['filename']}?")
+                submitted = st.form_submit_button("Save changes", use_container_width=True)
 
-                d1, d2 = st.columns(2)
+            if submitted:
+                st.session_state.results[i]["business"] = business_val.strip() or "UNKNOWN BUSINESS"
+                st.session_state.results[i]["abn"] = abn_val.strip() or "UNKNOWNABN"
+                st.session_state.results[i]["date"] = date_val.strip() or "UNKNOWN-DATE"
+                st.session_state.results[i]["invoice_number"] = invoice_val.strip() or "UNKNOWN-INVOICE"
+                st.session_state.results[i]["filename"] = build_filename(st.session_state.results[i])
+                st.success("Saved.")
+                st.rerun()
 
-                with d1:
-                    if st.button("Confirm Delete", key=f"confirm_delete_{i}", use_container_width=True):
-                        st.session_state.results.pop(i)
-                        st.session_state.pending_delete = None
+            st.download_button(
+                "Download PDF",
+                r["pdf"],
+                file_name=r["filename"],
+                mime="application/pdf",
+                key=f"download_{i}",
+                use_container_width=True,
+            )
 
-                        if not st.session_state.results:
-                            st.session_state.selected_invoice = 0
-                        elif st.session_state.selected_invoice >= len(st.session_state.results):
-                            st.session_state.selected_invoice = len(st.session_state.results) - 1
+            st.subheader("PDF Pages")
+            for page_num, page_img in enumerate(r["page_images"], start=1):
+                st.markdown(f"**Page {page_num}**")
+                st.image(page_img, use_container_width=True)
 
-                        st.rerun()
+            with st.expander("View extracted text"):
+                st.text(r["text"][:12000])
 
-                with d2:
-                    if st.button("Cancel", key=f"cancel_delete_{i}", use_container_width=True):
-                        st.session_state.pending_delete = None
-                        st.rerun()
+    st.subheader("Summary")
+    st.write(f"Total uploaded: {st.session_state.total_uploaded}")
+    st.write(f"Unique invoices: {len(st.session_state.results)}")
+    st.write(f"Duplicates removed: {len(st.session_state.duplicates)}")
 
-        st.subheader("Summary")
-        st.write(f"Total uploaded: {st.session_state.total_uploaded}")
-        st.write(f"Unique invoices: {len(st.session_state.results)}")
-        st.write(f"Duplicates removed: {len(st.session_state.duplicates)}")
+    if st.session_state.duplicates:
+        st.subheader("Duplicate invoices")
+        st.dataframe(st.session_state.duplicates, use_container_width=True)
 
-        if st.session_state.duplicates:
-            st.subheader("Duplicate invoices")
-            st.dataframe(st.session_state.duplicates, use_container_width=True)
+    zip_bytes = build_zip(st.session_state.results)
 
-        zip_bytes = build_zip(st.session_state.results)
-
-        st.download_button(
-            "Download All (ZIP)",
-            zip_bytes,
-            "invoices.zip",
-            mime="application/zip",
-            use_container_width=True,
-        )
-
-# -----------------------
-# RIGHT SIDE
-# -----------------------
-
-with right_col:
-    if st.session_state.results:
-        idx = st.session_state.selected_invoice
-        item = st.session_state.results[idx]
-
-        st.subheader("Invoice Viewer")
-
-        if has_unknown_fields(item):
-            st.warning("Some fields are missing. Review the invoice pages below and update the fields.")
-        else:
-            st.success("All key fields were detected.")
-
-        if st.session_state.save_message:
-            st.success(st.session_state.save_message)
-
-        st.download_button(
-            "Download Selected PDF",
-            data=item["pdf"],
-            file_name=item["filename"],
-            mime="application/pdf",
-            use_container_width=True,
-            key=f"download_selected_{idx}",
-        )
-
-        st.subheader("Edit extracted fields")
-
-        form_business = st.text_input("Business Name", value=item["business"], key=f"business_field_{idx}")
-        form_abn = st.text_input("ABN", value=item["abn"], key=f"abn_field_{idx}")
-        form_date = st.text_input("Invoice Date", value=item["date"], key=f"date_field_{idx}")
-        form_invoice = st.text_input("Invoice Number", value=item["invoice_number"], key=f"invoice_field_{idx}")
-
-        if st.button("Save changes", key=f"save_button_{idx}", use_container_width=True):
-            st.session_state.results[idx]["business"] = form_business.strip() or "UNKNOWN BUSINESS"
-            st.session_state.results[idx]["abn"] = form_abn.strip() or "UNKNOWNABN"
-            st.session_state.results[idx]["date"] = form_date.strip() or "UNKNOWN-DATE"
-            st.session_state.results[idx]["invoice_number"] = form_invoice.strip() or "UNKNOWN-INVOICE"
-            st.session_state.results[idx]["filename"] = build_filename(st.session_state.results[idx])
-            st.session_state.save_message = "Invoice updated successfully."
-            st.rerun()
-
-        st.subheader("PDF Pages")
-        for page_num, page_img in enumerate(item["page_images"], start=1):
-            st.markdown(f"**Page {page_num}**")
-            st.image(page_img, use_container_width=True)
-
-        with st.expander("View extracted text"):
-            st.text(item["text"][:12000])
+    st.download_button(
+        "Download All (ZIP)",
+        zip_bytes,
+        "invoices.zip",
+        mime="application/zip",
+        use_container_width=True,
+    )
