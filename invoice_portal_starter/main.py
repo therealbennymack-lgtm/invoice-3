@@ -80,7 +80,7 @@ def parse_date(text: str) -> str:
             for fmt in ("%d/%m/%Y", "%d-%b-%Y", "%d-%b-%y", "%Y-%m-%d"):
                 try:
                     return datetime.strptime(raw, fmt).strftime("%Y-%m-%d")
-                except:
+                except Exception:
                     pass
 
     return "UNKNOWN-DATE"
@@ -115,6 +115,9 @@ if "duplicates" not in st.session_state:
 if "total_uploaded" not in st.session_state:
     st.session_state.total_uploaded = 0
 
+if "pending_delete" not in st.session_state:
+    st.session_state.pending_delete = None
+
 
 # -----------------------
 # UPLOAD
@@ -132,7 +135,7 @@ if uploaded_files:
 
         try:
             text = read_pdf_text(file_bytes)
-        except:
+        except Exception:
             continue
 
         business = extract_business(text)
@@ -167,6 +170,7 @@ if uploaded_files:
     st.session_state.results = results
     st.session_state.duplicates = duplicates
     st.session_state.total_uploaded = len(uploaded_files)
+    st.session_state.pending_delete = None
 
 
 # -----------------------
@@ -177,21 +181,17 @@ if st.session_state.results:
 
     st.subheader("Invoices")
 
-    to_delete = None
-
     for i, r in enumerate(st.session_state.results):
 
         col1, col2 = st.columns([9, 1])
 
         with col1:
-            label = f"{i+1}. {r['filename']}"
-            st.write(label)
+            st.write(f"{i+1}. {r['filename']}")
 
         with col2:
-            delete_clicked = st.button("🗑️", key=f"delete_{i}")
-
-        if delete_clicked:
-            to_delete = i
+            if st.button("Delete", key=f"delete_{i}"):
+                st.session_state.pending_delete = i
+                st.rerun()
 
         with st.expander("View details"):
             st.write(f"Business: {r['business']}")
@@ -207,9 +207,21 @@ if st.session_state.results:
                 key=f"download_{i}",
             )
 
-    if to_delete is not None:
-        st.session_state.results.pop(to_delete)
-        st.rerun()
+        if st.session_state.pending_delete == i:
+            st.warning(f"Are you sure you want to delete: {r['filename']}?")
+
+            confirm_col, cancel_col = st.columns([1, 1])
+
+            with confirm_col:
+                if st.button("Confirm Delete", key=f"confirm_delete_{i}"):
+                    st.session_state.results.pop(i)
+                    st.session_state.pending_delete = None
+                    st.rerun()
+
+            with cancel_col:
+                if st.button("Cancel", key=f"cancel_delete_{i}"):
+                    st.session_state.pending_delete = None
+                    st.rerun()
 
 
 # -----------------------
@@ -219,14 +231,13 @@ if st.session_state.results:
 if st.session_state.results:
 
     st.subheader("Summary")
-
     st.write(f"Total uploaded: {st.session_state.total_uploaded}")
     st.write(f"Unique invoices: {len(st.session_state.results)}")
     st.write(f"Duplicates removed: {len(st.session_state.duplicates)}")
 
     if st.session_state.duplicates:
         st.subheader("Duplicate invoices")
-        st.dataframe(st.session_state.duplicates)
+        st.dataframe(st.session_state.duplicates, use_container_width=True)
 
     zip_bytes = build_zip(st.session_state.results)
 
