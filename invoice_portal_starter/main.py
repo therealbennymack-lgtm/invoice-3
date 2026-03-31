@@ -28,15 +28,13 @@ def read_pdf_text(file_bytes: bytes) -> str:
     return text
 
 
-def pdf_to_images(file_bytes: bytes, zoom: float = 1.6):
+def pdf_to_images(file_bytes: bytes, zoom: float = 1.4):
     doc = fitz.open(stream=file_bytes, filetype="pdf")
     images = []
     matrix = fitz.Matrix(zoom, zoom)
-
     for page in doc:
         pix = page.get_pixmap(matrix=matrix, alpha=False)
         images.append(pix.tobytes("png"))
-
     doc.close()
     return images
 
@@ -316,35 +314,24 @@ with right_col:
             file_name=item["filename"],
             mime="application/pdf",
             use_container_width=True,
-            key=f"open_selected_{idx}",
+            key=f"download_selected_{idx}",
         )
 
         st.subheader("Edit extracted fields")
 
-        business_key = f"business_input_{idx}"
-        abn_key = f"abn_input_{idx}"
-        date_key = f"date_input_{idx}"
-        invoice_key = f"invoice_input_{idx}"
+        with st.form(key=f"edit_form_{idx}"):
+            business_val = st.text_input("Business Name", value=item["business"])
+            abn_val = st.text_input("ABN", value=item["abn"])
+            date_val = st.text_input("Invoice Date", value=item["date"])
+            invoice_val = st.text_input("Invoice Number", value=item["invoice_number"])
 
-        if business_key not in st.session_state:
-            st.session_state[business_key] = item["business"]
-        if abn_key not in st.session_state:
-            st.session_state[abn_key] = item["abn"]
-        if date_key not in st.session_state:
-            st.session_state[date_key] = item["date"]
-        if invoice_key not in st.session_state:
-            st.session_state[invoice_key] = item["invoice_number"]
+            submitted = st.form_submit_button("Save changes", use_container_width=True)
 
-        st.text_input("Business Name", key=business_key)
-        st.text_input("ABN", key=abn_key)
-        st.text_input("Invoice Date", key=date_key)
-        st.text_input("Invoice Number", key=invoice_key)
-
-        if st.button("Save changes", key=f"save_{idx}", use_container_width=True):
-            st.session_state.results[idx]["business"] = st.session_state[business_key].strip() or "UNKNOWN BUSINESS"
-            st.session_state.results[idx]["abn"] = st.session_state[abn_key].strip() or "UNKNOWNABN"
-            st.session_state.results[idx]["date"] = st.session_state[date_key].strip() or "UNKNOWN-DATE"
-            st.session_state.results[idx]["invoice_number"] = st.session_state[invoice_key].strip() or "UNKNOWN-INVOICE"
+        if submitted:
+            st.session_state.results[idx]["business"] = business_val.strip() or "UNKNOWN BUSINESS"
+            st.session_state.results[idx]["abn"] = abn_val.strip() or "UNKNOWNABN"
+            st.session_state.results[idx]["date"] = date_val.strip() or "UNKNOWN-DATE"
+            st.session_state.results[idx]["invoice_number"] = invoice_val.strip() or "UNKNOWN-INVOICE"
             st.session_state.results[idx]["filename"] = build_filename(st.session_state.results[idx])
             st.session_state.save_message = "Invoice updated successfully."
             st.rerun()
