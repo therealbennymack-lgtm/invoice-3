@@ -68,19 +68,24 @@ def extract_business(text: str) -> str:
     import re
 
     lines = [re.sub(r"\s+", " ", x).strip() for x in text.splitlines() if x.strip()]
+    full_text = " ".join(lines).lower()
 
-    bad_starts = ("<~", "~", "ccd=", "<", ">")
+    # Hard match known suppliers first
+    known_suppliers = [
+        ("canon australia pty ltd", "CANON AUSTRALIA PTY LTD"),
+        ("canon australia pty. ltd.", "CANON AUSTRALIA PTY LTD"),
+        ("kyocera document solutions australia pty ltd", "KYOCERA DOCUMENT SOLUTIONS AUSTRALIA PTY LTD"),
+        ("bbc digital", "BBC DIGITAL"),
+        ("kk technical services pty ltd", "KK TECHNICAL SERVICES PTY LTD"),
+        ("that marketing co", "THAT MARKETING CO"),
+    ]
+    for needle, label in known_suppliers:
+        if needle in full_text:
+            return label
+
+    bad_starts = ("<~", "~", "<", ">", "customer no", "invoice no", "date", "abn")
     bad_contains = [
-        "invoice",
-        "tax invoice",
-        "invoice date",
-        "due date",
-        "page",
-        "description",
-        "subtotal",
-        "total",
-        "amount due",
-        "abn",
+        "customer no",
         "customer bill to",
         "customer ship to",
         "installation address",
@@ -90,46 +95,47 @@ def extract_business(text: str) -> str:
         "order date",
         "payment due by",
         "trading terms",
+        "bpay",
+        "invoice",
+        "tax invoice",
+        "invoice date",
+        "due date",
+        "page",
+        "description",
+        "subtotal",
+        "total",
+        "amount due",
         "phone",
         "fax",
-        "bpay",
+        "www.",
+        "email",
     ]
 
-    # PRIORITY 1: known supplier names
-    known_suppliers = [
-        "canon australia pty ltd",
-        "kyocera document solutions australia pty ltd",
-        "bbc digital",
-        "kk technical services pty ltd",
-        "that marketing co",
-    ]
-    for line in lines[:40]:
+    # Prefer supplier lines that appear after "direct to:"
+    for line in lines[:60]:
         lower = line.lower()
-        for supplier in known_suppliers:
-            if supplier in lower:
-                return clean_name(supplier).upper()
+        if "direct to:" in lower and "canon" in lower:
+            cleaned = lower.replace("direct to:", "").strip()
+            return clean_name(cleaned).upper().replace(".", "")
 
-    # PRIORITY 2: any PTY LTD line that looks like a supplier
-    for line in lines[:40]:
+    # Prefer PTY LTD lines that do not look like customer/address labels
+    for line in lines[:60]:
         lower = line.lower()
 
-        if line.startswith(bad_starts):
+        if lower.startswith(bad_starts):
             continue
         if any(x in lower for x in bad_contains):
             continue
-        if re.search(r"(street|road|vic|nsw|qld|wa|sa|tas|australia)", lower):
+        if re.search(r"(street|road|vic|nsw|qld|wa|sa|tas|australia)$", lower):
             continue
-        if re.search(r"^\W+$", line):
-            continue
-
         if "pty ltd" in lower:
-            return clean_name(line).upper()
+            return clean_name(line).upper().replace(".", "")
 
-    # PRIORITY 3: fallback clean line
-    for line in lines[:40]:
+    # Fallback clean line
+    for line in lines[:60]:
         lower = line.lower()
 
-        if line.startswith(bad_starts):
+        if lower.startswith(bad_starts):
             continue
         if any(x in lower for x in bad_contains):
             continue
@@ -137,12 +143,10 @@ def extract_business(text: str) -> str:
             continue
         if re.search(r"(street|road|vic|nsw|qld|wa|sa|tas|australia|email|www\.)", lower):
             continue
-        if re.search(r"^\W+$", line):
-            continue
         if len(line) < 3:
             continue
 
-        return clean_name(line).upper()
+        return clean_name(line).upper().replace(".", "")
 
     return "UNKNOWN BUSINESS"
 
